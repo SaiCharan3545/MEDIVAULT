@@ -1,0 +1,59 @@
+Securing Data With Blockchain and AI
+In cyber world everything is dependent on data and all Artificial Intelligence algorithms discover knowledge from past data only, for example in online shopping application users review data is very important for new comers to take decision on which product to purchase or not to purchase, we can take many examples like health care to know good hospitals or education institutions etc. Not all cyber data can be made publicly available such as Patient Health Data which contains patient disease details and contact information and if such data available publicly then there is no security for that patient data.
+Now a days all service providers such as online social networks or cloud storage will store some type of users data and they can sale that data to other organization for their own benefits and user has no control on his data as that data is saved on third party servers.
+To overcome from above issue author has describe concept called Private Data Centres (PDC) with Blockchain and AI technique to provide security to user’s data. In this technique 3 functions will work which describe below
+1)	Blockchain: Blockchain-based data sharing withownership guarantee, which enables trusted data sharing in the large-scale environment to form real big data. In this technique users can define access control which means which user has permission to access data and which user cannot access data and Blockchain object will be generate on that access data and allow only those users to access data which has permissions. In Blockchain object user will add/subscribe share data and give permission.
+2)	Artificial Intelligence: AI-based secure computing platform to produce more intelligent security rules, which helps to constructa more trusted cyberspace. AI work similar to human brain and responsible to execute logic to check whether requesting user has permission to access shared data. If access is available then AI allow Blockchain to display share data otherwise ignore request.
+3)	Rewards: In this technique all users who is sharing the data will earn rewards point upon any user access his data. trusted value-exchange mechanism for purchasing security service, providinga way for participants to gain economic rewards when giving out their data or service, which promotes thedata sharing and thus achieves better performance of AI.
+To implement this project author has taken medical data sharing example and I am also using same concept to build this project.
+Modules Information:
+This project consists of two modules
+1)	Patients: Patients first create his profile with all disease details and then select desired hospital with whom he wishes to share/subscribe data. While creating profile application will create Blockchain object with allowable permission and it will allow only those hospitals to access data.
+Patient Login: Patient can login to application with his profile id and check total rewards he earned from sharing data.
+
+2)	Hospital: Hospital1 and Hospital2 are using in this application as two organizations with whom patient can share data. At a time any hospital can login to application and then enter search string as disease name.
+AI algorithm will take input disease string and then perform search operation on all patients to get similar disease patients and then check whether this hospital has permission to access that patient data or not, if hospital has access permission then it will display those patients records to that hospital.
+Below is the code example to create Block chain object with patient data
+blockchain = Blockchain() //creating block chain object
+x =  '{"Patient_id":"'+str(count)+'", "patient_name":"'+name+'", "age":"'+age+'", "problem_desc":"'+problem+'", "profile_date":"'+str(current_time)+'", "access_data":"'+str(access)+'","gender":"'+gender+'"}' //creating access with input data 
+blockchain.add_new_transaction(json.loads(x)) //adding transaction to blockchain
+hash = blockchain.mine()//mining transaction to generate hash value
+In above code see comment to understand 
+Screen shots
+First create database in MYSQL by copying content from ‘DB.txt’ file and paste in MYSQL. 
+In settings file change port no from 3308 to 3306 and in ‘views.py’ file also change port no to 3306
+Deploy code on DJANOGO and start server and run in browser to get below screen
+ 
+In above screen click on ‘New Patient Register Here’ link to get below screen
+ 
+In above screen I am adding patient disease details and selecting ‘Hospital1’ to share my data and if you want to share with two hospitals then hold ‘CTRL’ key and select both hospitals to give permission. Now press ‘Create’ button to create profile
+ 
+In above screen one patient is created with patient ID 1 and now Hospital 1 can login and search and access this patient data as patient has given permission to Hospital1
+ 
+
+In above screen to login as Hospital1 click on ‘Hospital’ link to get above screen. Use ‘Hospital1’ as username and ‘Hospital1’ as password to login as Hospital1 and use Hospital2 to login as Hospital2. After login will get below screen
+ 
+In above screen click on ‘Access Patient Share Data’ link to search for patient details
+ 
+In above screen I want to search for all patients who are suffering from ‘pain’ and then click on ‘Access data’ button to get below screen
+ 
+In above screen Hospital1 getting details of patient and Hospital2 not having permission so it will not get details. To see this logout and login as ‘Hospital2’
+ 
+In above screen ‘Hospital2’ is login, after login will get below screen
+ 
+Now click on ‘Access Patient Share Data’ link and search for same pain disease
+ 
+For above query will get below result
+ 
+In above screen no patient details are showing as Hospital2 not having permission. So block chain allow only those users to access data who has permission. Now logout and login as patient by entering patient id in below screen
+ 
+
+After login will get below details for patient 1
+
+ 
+
+In above screen we can see patient all details and hash code generated by block chain and in last column we can see patient reward revenue as 0.5 and it will get update upon every access from hospital user.
+
+
+
+

@@ -1,0 +1,520 @@
+Awesome — I’ll give you everything you need to upload to Bolt and get a working Patient–Hospital site (no AI, no blockchain). Below you’ll find:
+
+requirements.txt
+
+README.md (step-by-step: setup, run, Bolt tips)
+
+schema.sql (create tables + seed hospitals)
+
+Minimal Flask app code (split into app.py and models.py) — ready to paste into your Bolt project
+
+Short templates scaffolding examples and where to put them
+
+Copy these files into your project and follow the README steps. I kept the code minimal, secure (password hashing, parameterized ORM updates), and focused on the required flows: patient register, patient login/view, hospital login/search, access logs & reward rule (once per hospital per patient per day).
+
+requirements.txt
+Flask==2.2.5
+SQLAlchemy==2.0.21
+pymysql==1.1.0
+Werkzeug==2.2.3
+python-dotenv==1.0.0
+
+schema.sql
+-- Create database (run or create via Bolt UI)
+CREATE DATABASE IF NOT EXISTS SecuringData;
+USE SecuringData;
+
+-- Hospitals table
+CREATE TABLE IF NOT EXISTS hospitals (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  name VARCHAR(100) NOT NULL UNIQUE,
+  username VARCHAR(100) NOT NULL UNIQUE,
+  password_hash VARCHAR(256) NOT NULL
+);
+
+-- Patients table
+CREATE TABLE IF NOT EXISTS patients (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  patient_name VARCHAR(200),
+  age INT,
+  problem_desc TEXT,
+  profile_date DATETIME,
+  gender VARCHAR(20),
+  contact_no VARCHAR(50),
+  address TEXT,
+  access_data VARCHAR(255),      -- space-separated hospital names
+  revenue DECIMAL(10,2) DEFAULT 0.00
+);
+
+-- Access logs table
+CREATE TABLE IF NOT EXISTS access_logs (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  patient_id INT NOT NULL,
+  hospital_id INT NOT NULL,
+  access_time DATETIME NOT NULL,
+  allowed BOOLEAN NOT NULL,
+  reward_given BOOLEAN DEFAULT FALSE,
+  FOREIGN KEY (patient_id) REFERENCES patients(id),
+  FOREIGN KEY (hospital_id) REFERENCES hospitals(id)
+);
+
+-- Seed two hospitals (passwords are placeholders; change after deploy)
+INSERT IGNORE INTO hospitals (name, username, password_hash)
+VALUES
+('Hospital1', 'Hospital1', 'PLACEHOLDER_HASH'),
+('Hospital2', 'Hospital2', 'PLACEHOLDER_HASH');
+
+
+Note: The SQL inserts set password_hash to placeholder values. The README below shows how to generate proper password hashes and seed hospitals from the app instead of raw SQL (safer).
+
+README.md (upload-ready)
+# Patient–Hospital Data Sharing Portal (Bolt-ready)
+
+Simple Flask web application where patients register medical profiles and select hospitals that may access them. Hospitals can log in and search for allowed patient records. Each allowed access increments patient revenue by 0.5 once per hospital per day.
+
+## Files included
+- requirements.txt
+- schema.sql
+- app.py
+- models.py
+- templates/ (folder with HTML templates)
+- .env (not included — create to configure DB)
+
+## Prerequisites
+- Python 3.8+
+- MySQL server (or use Bolt-provided DB)
+- Bolt account (optional) — follow Bolt's upload instructions
+
+## Setup (local)
+1. Create & activate a virtual environment:
+
+
+python -m venv venv
+source venv/bin/activate # mac/linux
+venv\Scripts\activate # windows
+pip install -r requirements.txt
+
+
+2. Create DB:
+- If you have MySQL locally, run `schema.sql`:
+  ```
+  mysql -u root -p < schema.sql
+  ```
+- Alternatively, create the database and allow the app to create tables automatically (see below).
+
+3. Configure DB connection (create `.env` in project root):
+
+
+DATABASE_URL=mysql+pymysql://<db_user>:<db_pass>@<host>:<port>/SecuringData
+SECRET_KEY=replace-with-a-secret
+
+
+4. Seed hospitals (recommended) — run the small script included in app (or use `/init` route when running local server).
+
+## Run locally
+
+
+export FLASK_APP=app.py
+export FLASK_ENV=development
+flask run
+
+Open `http://127.0.0.1:5000`
+
+## Bolt deployment tips
+- Zip project files and upload as instructed in Bolt console.
+- Set environment variables in Bolt: `DATABASE_URL` and `SECRET_KEY`.
+- Use Bolt's managed MySQL or connect to an external MySQL instance.
+- Make sure `requirements.txt` is present so Bolt installs dependencies.
+
+## Important behavior
+- Patient registration returns a patient ID — keep that to log in as patient.
+- Hospital users: run `/init` once (or use the seed method) to create `Hospital1` and `Hospital2` accounts with hashed passwords.
+- Reward: increment 0.5 per allowed access, only once per (hospital, patient, day).
+
+## Security notes
+- Passwords are hashed using Werkzeug.
+- Use HTTPS in production.
+- Replace `SECRET_KEY` with a secure random value.
+- For production, replace space-separated `access_data` with a proper relation table.
+
+## Support
+If Bolt needs a specific structure (Procfile / start command), use `gunicorn app:app` as the start command.
+
+models.py
+# models.py
+from sqlalchemy import Column, Integer, String, Text, DateTime, Boolean, DECIMAL, ForeignKey
+from sqlalchemy.orm import relationship, DeclarativeBase
+from datetime import datetime
+
+class Base(DeclarativeBase):
+    pass
+
+class Hospital(Base):
+    __tablename__ = 'hospitals'
+    id = Column(Integer, primary_key=True)
+    name = Column(String(100), unique=True, nullable=False)
+    username = Column(String(100), unique=True, nullable=False)
+    password_hash = Column(String(256), nullable=False)
+
+class Patient(Base):
+    __tablename__ = 'patients'
+    id = Column(Integer, primary_key=True)
+    patient_name = Column(String(200))
+    age = Column(Integer)
+    problem_desc = Column(Text)
+    profile_date = Column(DateTime, default=datetime.utcnow)
+    gender = Column(String(20))
+    contact_no = Column(String(50))
+    address = Column(Text)
+    access_data = Column(String(255))   # space-separated hospital names
+    revenue = Column(DECIMAL(10,2), default=0.00)
+
+class AccessLog(Base):
+    __tablename__ = 'access_logs'
+    id = Column(Integer, primary_key=True)
+    patient_id = Column(Integer, ForeignKey('patients.id'), nullable=False)
+    hospital_id = Column(Integer, ForeignKey('hospitals.id'), nullable=False)
+    access_time = Column(DateTime, default=datetime.utcnow)
+    allowed = Column(Boolean, nullable=False)
+    reward_given = Column(Boolean, default=False)
+
+app.py (complete minimal Flask app)
+# app.py
+import os
+from flask import Flask, render_template, request, redirect, url_for, session, flash, jsonify
+from sqlalchemy import create_engine, select, and_
+from sqlalchemy.orm import sessionmaker
+from werkzeug.security import generate_password_hash, check_password_hash
+from models import Base, Hospital, Patient, AccessLog
+from datetime import datetime, date, timedelta
+from decimal import Decimal
+from dotenv import load_dotenv
+
+load_dotenv()
+
+DATABASE_URL = os.getenv('DATABASE_URL', 'mysql+pymysql://root:root@127.0.0.1:3306/SecuringData')
+SECRET_KEY = os.getenv('SECRET_KEY', 'replace-me')
+
+app = Flask(__name__)
+app.secret_key = SECRET_KEY
+
+# DB setup
+engine = create_engine(DATABASE_URL, echo=False, future=True)
+Base.metadata.create_all(engine)
+DBSession = sessionmaker(bind=engine, future=True)
+
+# --- helper to init hospitals (call /init once locally) ---
+@app.route('/init')
+def init_data():
+    db = DBSession()
+    try:
+        # create hospital users if not exist
+        for name in ('Hospital1', 'Hospital2'):
+            stmt = select(Hospital).where(Hospital.username == name)
+            res = db.execute(stmt).scalars().first()
+            if not res:
+                h = Hospital(name=name, username=name, password_hash=generate_password_hash(name))
+                db.add(h)
+        db.commit()
+    finally:
+        db.close()
+    return "Initialized hospitals (Hospital1, Hospital2). Passwords equal usernames."
+
+# --- Home ---
+@app.route('/')
+def index():
+    return render_template('index.html')
+
+# --- Patient register (GET form / POST save) ---
+@app.route('/patient/register', methods=['GET','POST'])
+def patient_register():
+    if request.method == 'POST':
+        name = request.form.get('name')
+        age = request.form.get('age') or None
+        problem = request.form.get('problem')
+        access_list = request.form.getlist('access')  # list
+        access_str = " ".join(access_list).strip()
+        gender = request.form.get('gender')
+        contact = request.form.get('contact')
+        address = request.form.get('address')
+
+        db = DBSession()
+        try:
+            p = Patient(patient_name=name, age=int(age) if age else None,
+                        problem_desc=problem, profile_date=datetime.utcnow(),
+                        gender=gender, contact_no=contact, address=address,
+                        access_data=access_str, revenue=Decimal('0.00'))
+            db.add(p); db.commit()
+            pid = p.id
+        finally:
+            db.close()
+        flash(f'Profile created. Your Patient ID: {pid}', 'success')
+        return redirect(url_for('patient_register'))
+    # GET
+    return render_template('patient_register.html')
+
+# --- Patient login (simple by ID) ---
+@app.route('/patient/login', methods=['GET','POST'])
+def patient_login():
+    if request.method == 'POST':
+        pid = request.form.get('patient_id')
+        db = DBSession()
+        try:
+            p = db.get(Patient, int(pid))
+            if p:
+                # show patient dashboard
+                return render_template('patient_dashboard.html', patient=p)
+            else:
+                flash('Patient ID not found', 'danger')
+        finally:
+            db.close()
+    return render_template('patient_login.html')
+
+# --- Hospital login ---
+@app.route('/hospital/login', methods=['GET','POST'])
+def hospital_login():
+    if request.method == 'POST':
+        username = request.form.get('username')
+        password = request.form.get('password')
+        db = DBSession()
+        try:
+            stmt = select(Hospital).where(Hospital.username == username)
+            hosp = db.execute(stmt).scalars().first()
+            if hosp and check_password_hash(hosp.password_hash, password):
+                session['hospital_id'] = hosp.id
+                session['hospital_name'] = hosp.name
+                return redirect(url_for('hospital_dashboard'))
+            else:
+                flash('Invalid credentials', 'danger')
+        finally:
+            db.close()
+    return render_template('hospital_login.html')
+
+# --- Hospital dashboard & search ---
+@app.route('/hospital/dashboard')
+def hospital_dashboard():
+    if 'hospital_id' not in session:
+        return redirect(url_for('hospital_login'))
+    return render_template('hospital_dashboard.html', hospital_name=session.get('hospital_name'))
+
+@app.route('/hospital/search', methods=['POST'])
+def hospital_search():
+    if 'hospital_id' not in session:
+        return redirect(url_for('hospital_login'))
+    q = request.form.get('q','').strip()
+    hospital_id = session.get('hospital_id')
+    hospital_name = session.get('hospital_name')
+
+    db = DBSession()
+    results = []
+    try:
+        # basic LIKE search for problem_desc
+        stmt = select(Patient).where(Patient.problem_desc.ilike(f'%{q}%'))
+        rows = db.execute(stmt).scalars().all()
+        for p in rows:
+            allowed = False
+            if p.access_data:
+                allowed = hospital_name in p.access_data.split()
+            # reward rule: once per hospital per patient per day
+            reward_given = False
+            if allowed:
+                # check if reward already given today
+                today_start = datetime.combine(date.today(), datetime.min.time())
+                stmt2 = select(AccessLog).where(
+                    (AccessLog.patient_id == p.id) &
+                    (AccessLog.hospital_id == hospital_id) &
+                    (AccessLog.reward_given == True) &
+                    (AccessLog.access_time >= today_start)
+                )
+                exists = db.execute(stmt2).scalars().first()
+                if not exists:
+                    # give reward and log
+                    p.revenue = p.revenue + Decimal('0.5')
+                    log = AccessLog(patient_id=p.id, hospital_id=hospital_id, allowed=True, reward_given=True)
+                    db.add(log)
+                    db.commit()
+                    reward_given = True
+                else:
+                    # still log access but no reward
+                    log = AccessLog(patient_id=p.id, hospital_id=hospital_id, allowed=True, reward_given=False)
+                    db.add(log); db.commit()
+            else:
+                # log denied access
+                log = AccessLog(patient_id=p.id, hospital_id=hospital_id, allowed=False, reward_given=False)
+                db.add(log); db.commit()
+
+            results.append({
+                'id': p.id, 'name': p.patient_name, 'age': p.age,
+                'problem': p.problem_desc if allowed else 'Access Denied',
+                'allowed': allowed, 'reward_given': reward_given, 'revenue': float(p.revenue)
+            })
+    finally:
+        db.close()
+    return render_template('hospital_results.html', results=results, query=q)
+
+# --- Logout ---
+@app.route('/logout')
+def logout():
+    session.clear()
+    return redirect(url_for('index'))
+
+# --- Run ---
+if __name__ == '__main__':
+    app.run(debug=True)
+
+Template files (place in templates/)
+
+Create these minimal templates (Bootstrap is optional). I list minimal HTML; you can style later.
+
+templates/index.html
+
+<!doctype html>
+<html><head><title>Home</title></head>
+<body>
+  <h1>Patient–Hospital Portal</h1>
+  <a href="/patient/register">Patient Register</a> |
+  <a href="/patient/login">Patient Login</a> |
+  <a href="/hospital/login">Hospital Login</a>
+</body></html>
+
+
+templates/patient_register.html
+
+<!doctype html>
+<html><body>
+  <h2>Patient Register</h2>
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+      {% for cat, msg in messages %}<div class="alert">{{ msg }}</div>{% endfor %}
+    {% endif %}
+  {% endwith %}
+  <form method="post">
+    Name: <input name="name"><br>
+    Age: <input name="age"><br>
+    Problem: <textarea name="problem"></textarea><br>
+    Allowed Hospitals: <select name="access" multiple>
+      <option value="Hospital1">Hospital1</option>
+      <option value="Hospital2">Hospital2</option>
+    </select><br>
+    Gender: <input name="gender"><br>
+    Contact: <input name="contact"><br>
+    Address: <textarea name="address"></textarea><br>
+    <button type="submit">Create</button>
+  </form>
+  <a href="/">Home</a>
+</body></html>
+
+
+templates/patient_login.html
+
+<!doctype html>
+<html><body>
+  <h2>Patient Login</h2>
+  <form method="post">
+    Patient ID: <input name="patient_id"><br>
+    <button type="submit">View Profile</button>
+  </form>
+  <a href="/">Home</a>
+</body></html>
+
+
+templates/patient_dashboard.html
+
+<!doctype html>
+<html><body>
+  <h2>Patient Dashboard</h2>
+  <p>ID: {{ patient.id }}</p>
+  <p>Name: {{ patient.patient_name }}</p>
+  <p>Age: {{ patient.age }}</p>
+  <p>Problem: {{ patient.problem_desc }}</p>
+  <p>Allowed Hospitals: {{ patient.access_data }}</p>
+  <p>Revenue: {{ patient.revenue }}</p>
+  <a href="/">Home</a>
+</body></html>
+
+
+templates/hospital_login.html
+
+<!doctype html>
+<html><body>
+  <h2>Hospital Login</h2>
+  <form method="post">
+    Username: <input name="username"><br>
+    Password: <input name="password" type="password"><br>
+    <button type="submit">Login</button>
+  </form>
+  <a href="/">Home</a>
+</body></html>
+
+
+templates/hospital_dashboard.html
+
+<!doctype html>
+<html><body>
+  <h2>Hospital Dashboard ({{ hospital_name }})</h2>
+  <form action="/hospital/search" method="post">
+    Search disease: <input name="q">
+    <button type="submit">Search</button>
+  </form>
+  <a href="/logout">Logout</a>
+</body></html>
+
+
+templates/hospital_results.html
+
+<!doctype html>
+<html><body>
+  <h2>Results for "{{ query }}"</h2>
+  <table border="1">
+    <tr><th>ID</th><th>Name</th><th>Age</th><th>Problem/Status</th><th>Allowed</th><th>RewardGiven</th><th>Revenue</th></tr>
+    {% for r in results %}
+      <tr>
+        <td>{{ r.id }}</td><td>{{ r.name }}</td><td>{{ r.age }}</td>
+        <td>{{ r.problem }}</td><td>{{ r.allowed }}</td>
+        <td>{{ r.reward_given }}</td><td>{{ r.revenue }}</td>
+      </tr>
+    {% endfor %}
+  </table>
+  <a href="/hospital/dashboard">Back</a>
+</body></html>
+
+How to seed hospitals securely (recommended)
+
+Run the app locally, visit /init once. That route will create Hospital1 and Hospital2 with passwords equal to their usernames (you can change them later via DB or add a password-change route).
+
+Final notes & next steps
+
+This deliverable exactly matches your Bolt request: patient + hospital environment, minimal, no blockchain/AI.
+
+After you upload to Bolt, set DATABASE_URL and SECRET_KEY in Bolt environment variables.
+
+If you want, I can now:
+
+Provide a zip of these files (ready to upload), or
+
+Convert this to a Procfile + gunicorn start command for production, or
+
+Replace the access_data field with a proper many-to-many relation.
+
+Which of those would you like next?
+
+You said:
+tes
+ChatGPT said:
+
+I think you meant "test" 🙂
+
+Do you want me to explain how to test the Patient–Hospital website after uploading it to Bolt?
+For example, the exact steps like:
+
+Run the app locally or on Bolt.
+
+Register a new patient.
+
+Login as a patient to check details.
+
+Login as Hospital1 and search for a matching disease.
+
+Confirm that the patient’s revenue increases by 0.5.
+
+Try Hospital2 (without permission) and confirm access is denied
